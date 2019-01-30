@@ -82,6 +82,11 @@ Then Stratos should either ..
 - Entities do not contain all properties that were in v2 (where functionality has not changed)
   - Covers simple values and entities (one to one and one to many) 
   - For instance `/organizations` and `/spaces` endpoints are not completed and contain only guid, create/updated date and name (space additionally has experimental `organization`)  
+- Entities returned by v2/v3 endpoints are not consistent
+  - For example
+    - push an app with `v3-push` and it shows up in `v2/apps`
+    - `v3/service_bindings` does not return service bindings that aren't attached to a v3 app
+  - Without knowing exactly all these occurrences we won't be able to work in a mixed v2/v3 endpoint state  
 - ~~Cannot determine if a CF supports v3 or when it does support v3 which endpoints it has~~
   - v3 version and supported endpoints can be determined by response to `<cf api url>` and `<cf api url>/v3`
   - ~~Getting the v2 version is simple, I don't know if there's correlation to v3 version~~
@@ -126,7 +131,7 @@ Then Stratos should either ..
 ### Questions
 - ~~Will `include` cover children of children? For instance `app` --> `route` --> `domain`~~
   - ~~How will lists be covered? For instance `organization` --> `space` --> `service instances`~~
--  How will the deprecation of v2 endpoints happen?
+- How will the deprecation of v2 endpoints happen?
   - One by one?
   - All together once v2 parity is reached?
 - Will duplicated `include`ed entities only appear once in a top level (entity or pagination) `included`? For example..conceptually..
@@ -138,3 +143,106 @@ Then Stratos should either ..
   - `/v3/apps/:app_guid/routes` also does not work (404)
   - `/v3/apps/:app_guid/route_mappings` works, but there doesn't seem to be a way to `include` the `route` such that it appears in the response
 - Which version is the `include=space,space.organization` notation supported in?
+
+## v3 Required `include`s, `order_by`, filters, missing properties
+
+### `/apps`
+Type | Name | Priority (blocking or 10 (high) - 1 (low)) | Notes
+--- | --- | --- | ---
+`include` | `space` | Blocking | 
+`include` | Organization via `space.organization` | Blocking |
+`include` | `packages` | 6 | Required to determine app state (state, updated_at)
+`include` | `processes` | 6 | Required to determine app state (instances)
+`include` | `processes.stats` | 6 | Required to determine app state (state).
+`include` | `current_droplet` | 6 | Required to determine app state (state). 
+`include` | `packages.builds` | 6 |  v3 currently has no link or relation. Required to determine app state (state).
+`order_by` | sum of `processes` `instances` count | 3 | [See below for notes](#v3-Required-Features)
+`order_by` | sum of `processes` `disk_in_mb` count | 3 | [See below for notes](#v3-Required-Features)
+`order_by` | sum of `processes` `memory_in_mb` count | 3 | [See below for notes](#v3-Required-Features)
+filter | `processes` state | 3 |
+filter | organization name | 3 | Allows free text search, rather than manual selection of cf and then org
+filter | space name | 3 | Allows free text search, rather than manual selection of cf, org and then space 
+
+### `/app`
+Type | Name | Priority (blocking or 10 (high) - 1 (low)) | Notes
+--- | --- | --- | ---
+`include` | `route_mappings` | 8
+`include` | Route via `route_mappings.route` | 8 | `/route` has no v3 equivalent 
+`include` | Route via `route_mappings.route.domain` | 8 | `/domain` has no v3 equivalent 
+links | `service_bindings` | blocking | 
+`include` | `service_bindings` | 8 | 
+~~`include`~~ | ~~`space`~~ |
+`include` | `space.organization` | 8
+`include` | `packages` | 6 | Required to determine app state (state, updated_at).
+`include` | `processes` | 6 | Required to determine app state (instances)
+`include` | `processes.stats` | 6 | Required to determine app state (state).
+`include` | `current_droplet` | 6 | Required to determine app state (state). 
+`include` | `packages.builds` | 6 | v3 currently has no link or relation. Required to determine app state (state).
+links | `features` | 8 | Required to fetch app ssh and revision info
+`include` | `features` | 8 | v3 currently has no link or relation to features. Required to fetch app ssh and revision info
+`include` | `droplets` | 3 | Note used at the moment, but it's easy to think that we'll want this info along with the app
+`include` | `tasks` | 3 | Note used at the moment, but it's easy to think that we'll want this info along with the app
+property | stack guid/whole entity | 7 | Stack name is included inline in an inlined `lifecycle` object. This placement seems like an odd pattern. It's not an entity on it's own with it's own endpoint... but does contain an inline entity (stack). The inlined stack contains only a name and not guid/rest of stack entity. 
+property | buildpack guid/whole entity | 7 | As per stack guid above
+
+### `/apps/{guid}/packages`
+Type | Name | Priority (blocking or 10 (high) - 1 (low)) | Notes
+--- | --- | --- | ---
+`include` | `app` | 1 | 
+links | `builds` | blocking | 
+`include` | `builds` | 8 | v3 currently has no link or relation
+
+### `/apps/{guid}/processes`
+Type | Name | Priority (blocking or 10 (high) - 1 (low)) | Notes
+--- | --- | --- | ---
+`include` | `stats` | 10 |
+`order_by` | `state` | 3 |
+`order_by` | `stats` `usage.time` | 3 | [See below for notes](#v3-Required-Features)
+`order_by` | `stats` `usage.cpu` | 3 | [See below for notes](#v3-Required-Features)
+`order_by` | `stats` `usage.mem` | 3 | [See below for notes](#v3-Required-Features)
+`order_by` | `stats` `usage.disk` | 3 | [See below for notes](#v3-Required-Features)
+filter | `state` | 3 | |
+
+### `/service_bindings` (functionality for /apps/{guid}/service_bindings only)
+Type | Name | Priority (blocking or 10 (high) - 1 (low)) | Notes
+--- | --- | --- | ---
+links | `service_instance` | blocking |
+links | `service_instance.service` | blocking |
+links | `service_instance.service_plan` | blocking | 
+links | `service_instance.tags` | blocking |
+`include` | `service_instance` | 8 | Not a v3 link
+`include` | `service_instance.service` | 8 | Not a v3 link
+`include` | `service_instance.service_plan` | 8 | Not a v3 link
+`include` | `service_instance.tags` | 8 | Not a v3 link
+`order_by` | service instance name | 3 |
+`order_by` | service name | 3 |
+`order_by` | service plan name | 3 |
+filter | service instance name | 3 |
+filter | service name | 3 |
+filter | service plan name | 3 |
+
+## v3 Required Features 
+
+### Single 'included` section
+There should hopefully be a single `included` section even if `included` elements have their own `include`s. Not quite a requirement, but a real nice to have. 
+
+### `include`d lists
+See https://github.com/cloudfoundry/cc-api-v3-style-guide#proposal-pagination-of-related-resources
+
+Use case - Routes, packages, builds, process stats, etc in an application
+
+### `order_by` values in `include`d 
+Covers simple case of sorting by a property in a 1:1 `include` and also summation of numerical properties in 1:M relationship.
+
+Use case - sort applications by instance count. Requires `processes` as an `include` and ability to sort on sum of `processes` instances property
+
+Use case - as above, but instead of instances the sum of memory in a `processes` disk_quota. Need to consider whether `processes` state value should be taken into account
+
+Use case - as above, but the sum of `processes` `stats` `usage.mem`.
+
+### filter values in `include`d
+As per `order_by`, delve into an `included` entity and filter out given a specific path. 
+
+Use case - Filter a list of service bindings by service instance name, service name or service plan name
+
+Use case - Filter a list of apps by organization or space
